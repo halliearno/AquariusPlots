@@ -45,9 +45,9 @@ df<-df[!grepl("Wave height|Water appearance", df$CharacteristicName),]
 
 ######################################################################
 #Change phosphorous to "bottom phosphorous" when measured at maximum depth 
-d$CharacteristicName2 <- d$CharacteristicName
-d$CharacteristicName2[d$Depth_m!=0 & d$CharacteristicName == "Total Phosphorus, mixed forms"] <- "Bottom Phosphorus"
-d$CharacteristicName <- d$CharacteristicName2 #Replace old column name
+df$CharacteristicName2 <- df$CharacteristicName
+df$CharacteristicName2[df$Depth_m!=0 & df$CharacteristicName == "Total Phosphorus, mixed forms"] <- "Bottom Phosphorus"
+df$CharacteristicName <- df$CharacteristicName2 #Replace old column name
 
 #Select relevant columns
 glknwqp <- df %>% select(c("ActivityIdentifier", "CharacteristicName", "ActivityDepthHeightMeasure.MeasureValue", "ResultMeasureValue", "ActivityEndDateTime", "MonitoringLocationIdentifier", "ResultMeasure.MeasureUnitCode")) %>% 
