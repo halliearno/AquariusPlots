@@ -1,1 +1,147 @@
-GLKNWaterQuality 
+---
+title: "Heat Map Examples for PIRO_04"
+output: html_notebook
+---
+
+Version in SIP Folder
+Edited 2023-01-26
+
+```{r}
+library(tidyverse)
+library(RColorBrewer)
+library(jsonlite)
+library(httr)
+library(lubridate)
+library(reshape2)
+```
+
+Can handle up to 10 locations 
+```{r}
+locations1 <- c(
+
+     "Water Temp.1.5m_temp_array@GLKN_PIRO_04",
+
+     "Water Temp.2.0m_temp_array@GLKN_PIRO_04",
+
+     "Water Temp.3.0m_temp_array@GLKN_PIRO_04",
+
+     "Water Temp.4.0m_temp_array@GLKN_PIRO_04",
+
+     "Water Temp.5.0m_temp_array@GLKN_PIRO_04",
+
+     "Water Temp.6.0m_temp_array@GLKN_PIRO_04",
+     
+     "Water Temp.7.0m_temp_array@GLKN_PIRO_04")
+
+```
+
+Function to download data from API
+```{r}
+
+#Function inputs are locations (as a list), start time, and end time
+getdata <- function(loc_list, starttime, endtime){
+  
+  # Load the wrapper and authenticate with the app server
+    source("timeseries_client.R")
+    timeseries$connect("https://aquarius.nps.gov", "aqreadonly", "aqreadonly")
+    
+  # Get data specified in the code block above
+    temps = timeseries$getTimeSeriesData(loc_list,
+    queryFrom = starttime, queryTo = endtime)
+    tempsdata <- data.frame(temps[4]) #temps$Points is the same as temps[4]
+    
+  # Extract columns with water temperature data
+    #These contain "NumericValue" in column name
+    data_to_return <- tempsdata[grepl("NumericValue",colnames(tempsdata))]
+
+  # Rename columns to depth, this is metadata returned from aq in a different df
+    colnames(data_to_return) <- temps$TimeSeries$Label #same as temps[1]
+  
+  # Add date and time column, from df that numeric values were extracted from
+    data_to_return$datetime <- tempsdata$Points.Timestamp
+    
+  # Return the df with datetime and temp values
+    data_to_return <- data.frame(data_to_return)
+    
+    data_to_return$datetime <- lubridate::as_datetime(data_to_return$datetime)
+    
+    return(data_to_return)
+    
+  # Not sure is this is necessary
+    timeseries$disconnect()
+
+}
+
+```
+
+
+Get data and rename to depth level to melt in next step
+```{r}
+
+#Start time and end time for data download
+#Format "YYYY-MM-DD"
+starttime <- "2010-5-01"
+endtime <- "2020-11-01"
+
+t1 <- getdata(locations1, starttime, endtime)
+
+colnames(t1) <- c("1.5", "2.0", "3.0", "4.0", "5.0", "6.0", "7.0", "date")
+
+```
+
+
+
+Clean up + format for ggplot by melting into columns of date, depth, temp
+```{r}
+temps <- melt(t1, id = "date")
+
+colnames(temps) <- c("date", "depth", "temp")
+
+temps$depth <- as.numeric(as.character(temps$depth))
+
+temps$temp <- as.numeric(temps$temp)
+
+temps$year <- year(temps$date)
+
+temps$month <- month(temps$date)
+
+temps <- temps %>% drop_na()
+temps$`Temperature (C)` <- temps$temp
+temps
+
+```
+
+Make Plots
+
+```{r}
+size_calc_width <- 1/length(temps) #fix 
+
+temps %>% filter(month %in% c(5:10)) %>% 
+ggplot() +
+  geom_tile( aes(date, -depth, color = `Temperature (C)`), 
+             width = size_calc_width, height = 1) +
+  facet_wrap(~year, scales = "free_x") +
+  xlab("Date")+
+  ylab("Depth") +
+  scale_x_datetime(date_labels = "%b", date_breaks = "1 month") +
+  scale_color_gradientn(colors = c( "azure",
+                                    "darkslategray1", 
+                                   # "darkseagreen1",
+                                    "palegreen1",
+                                   # "olivedrab2", 
+                                    "gold",
+                                    "darkorange",
+                                    "orangered3",
+                                    "firebrick"
+                                    )) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(), 
+     #   panel.border = element_blank(), 
+          panel.background = element_rect(colour = "black", size=4.4, fill=NA),
+    panel.border = element_rect(colour = "white", size=3., fill=NA),
+        strip.background = element_blank())
+```
+
+
+
