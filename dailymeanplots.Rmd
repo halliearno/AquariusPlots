@@ -1,0 +1,60 @@
+---
+title: "Daily Avereage Temperatures"
+output: html_notebook
+---
+#Daily average min/ max temperature boxplots from hourly data
+#Hallie Arno - SIP intern GLKN 
+#Edited 2/24/23
+
+#Libraries
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+#Upload data and make sure date is in correct format
+```{r}
+df_all <- read.csv("Exports/allAquariusData.csv")
+df_all$date <- date(df_all$date)
+
+```
+
+
+#Function to make plot, inputs are dataframe, site, and depth
+```{r}
+makeplot <- function(Dataframe, Site, Depth) {
+  df <- Dataframe %>% 
+  filter(site == site & depth == Depth) %>% 
+  aggregate(temp~date, FUN = "mean")
+  
+  df$month <- month(df$date)
+  df$year <- year(df$date)
+  
+  df %>% 
+  group_by(month, year) %>% 
+  summarize(min = min(temp), max = max(temp)) %>% 
+  melt(id = c("month", "year")) %>% 
+  mutate(month = as.factor(month)) %>% 
+  ggplot(aes(month, value, color = variable)) +
+    geom_boxplot() + 
+    scale_color_manual(values = c("dodgerblue", "darkred"), labels = c("Min daily mean", "Max daily mean")) +
+    theme_bw() +
+    theme(legend.title=element_blank(), 
+          legend.position = "top", 
+          plot.title = element_text(hjust = 0.5), 
+          plot.subtitle = element_text(hjust = 0.5)) +
+    labs(title = paste("Mean temperatures at", Site, "at", Depth, "M depth"), 
+         x = "Month",
+         y = "Temperature (C)",
+         subtitle = "Maximum and minumum average daily temperatures by month from 2012-2022."
+         
+    )
+
+}
+```
+
+#Call function
+```{r}
+makeplot(df_all, "ISRO_04", 1.5)
+```
+
