@@ -1,0 +1,263 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+Libraries
+```{r}
+library(tidyverse)
+library(lubridate)
+library(jsonlite)
+library(httr)
+```
+
+upload data 
+Function to download data from API - returns dataframe with date, one column for each depth, populated with temperature values in degrees C. 
+```{r}
+
+#Function inputs are locations (as a list), start time, and end time
+getdata <- function(loc_list, starttime, endtime){
+  
+  # Load the wrapper and authenticate with the app server
+    source("timeseries_client.R")
+    timeseries$connect("https://aquarius.nps.gov", "aqreadonly", "aqreadonly")
+    
+  # Get data specified in the code block above
+    temps = timeseries$getTimeSeriesData(loc_list,
+    queryFrom = starttime, queryTo = endtime)
+    tempsdata <- data.frame(temps[4]) #temps$Points is the same as temps[4]
+    
+    #"Escape" in case df returns empty
+    if(length(tempsdata) > 1){
+  # Extract columns with water temperature data
+    #These contain "NumericValue" in column name
+      data_to_return <- tempsdata[grepl("NumericValue",colnames(tempsdata))]
+  
+    # Rename columns to depth, this is metadata returned from aq in a different df
+      colnames(data_to_return) <- temps$TimeSeries$Label #same as temps[1]
+    
+    # Add date and time column, from df that numeric values were extracted from
+      data_to_return$datetime <- tempsdata$Points.Timestamp
+      
+    # Return the df with datetime and temp values
+      data_to_return <- data.frame(data_to_return)
+      
+      data_to_return$datetime <- lubridate::as_datetime(data_to_return$datetime)
+      
+      return(data_to_return)
+      
+    }
+  # Not sure is this is necessary
+    timeseries$disconnect()
+
+}
+```
+
+Lists of each available depth at each site. Set startung conditions (start date/ end date)
+Can be run on 
+```{r}
+#Site names and depth data
+VOYA_21 <- c(0, 1.5, 2:28)
+VOYA_22 <- c(0, 1.0, 1.2, 2:23)
+VOYA_05 <- c(0, 1.5, 2:6)
+PIRO_04 <- c(1.5, 2:9)
+PIRO_01 <- c(0, 1, 1.5, 2:18)
+SLBE_05 <- c(0, 1.5, 2:8)
+SLBE_01 <- c(0, 1.5, 2:13)
+ISRO_03 <- c(0, 1.5:10.5, 2:11)
+
+#Put together in a list, and have names for the loop below to iterate through. 
+#To change the sites where data is reterieved from, use this list
+
+SiteList <- list(VOYA_21, VOYA_22, VOYA_05, PIRO_04, PIRO_01, SLBE_05, SLBE_01, ISRO_03)
+names(SiteList) <- c("VOYA_21", "VOYA_22", "VOYA_05", "PIRO_04", "PIRO_01", "SLBE_05", "SLBE_01", "ISRO_03")
+names_list <- names(SiteList)
+
+#Start time and end time for the function "getdata"
+starttime <- "2010-01-01"
+endtime <- "2022-12-01"
+```
+
+
+Loop through to make a string to call data from each site and depth, then use getdata function 
+```{r}
+
+#Start w/ empty dataframe
+df_all <- data.frame(temp = numeric(), date = character(), site = character(), depth = numeric())
+
+
+for(site in 1:length(SiteList)){ #For each site
+  for(i in SiteList[[site]]) { #For each depth in that site 
+    
+    #Generate strings to call data from Aquarius: 
+    
+    if(i %% 1 == 0){ #Check to see if depth is an integer. If so, add ".0" to the string after depth. 
+      string_to_get <- paste0("Water Temp.", i, ".0m_temp_array@GLKN_", names_list[site])
+    }
+    
+    else{ #If not an integer, don't add .0 to the end of depth
+      string_to_get <- paste0("Water Temp.", i, "m_temp_array@GLKN_", names_list[site])
+    }
+    
+   #Get data from aquarius using getdata() function, return as datframe
+   df <-  as.data.frame(getdata(string_to_get, starttime, endtime))
+   
+   #As long a df is not empty (avoids errors)
+   if(length(df) > 1){
+      colnames(df) <- c("temp", "date") #Rename columns
+      df$site <- names_list[site] #Add column for site
+      df$depth <- i #Add column for depth
+      df_all <- rbind(df_all, df) #Bind to empty "master" dataframe
+      #See progress:
+      print(paste0("Temperature data for", names_list[site], "at ", i, " meters successfully retrieved")) 
+   }
+
+  
+  } 
+  
+}
+
+```
+
+```{r}
+write.csv(df_all, "Exports/allAquariusData.csv")
+```
+
+```{r}
+df_all
+```
+
+3/5 rule
+```{r}
+df <- df_all
+df$date <- as.POSIXct(df$date)
+df$day <- date(df$date)
+df$hour <- lubridate::hour(df_all$date)
+df$month <- month(df_all$date)
+df$year <- year(df_all$date)
+df
+```
+
+
+```{r}
+
+filter_df <- data.frame(matrix(ncol = 3, nrow = 0))
+
+#provide column names
+colnames(filter_df) <- c('day', 'count', 'site')
+
+
+for (Site in unique(df$site)) {
+temporary <- df %>%
+  filter(site == Site) %>%
+  group_by(day) %>%
+  summarize(count = n_distinct(hour)) %>% 
+  filter(count >= (0.6*24)) %>% 
+    mutate(site = Site) 
+  print(temporary)
+ filter_df <-  rbind(filter_df, temporary)
+}
+```
+
+```{r}
+filter_df
+#df$year <- year(df$day)
+```
+
+
+
+```{r}
+df1 <- filter(df, df$day %in% filter_df$day & df$site %in% filter_df$site)
+df1
+```
+
+```{r}
+df1 <- df1 %>% 
+  filter(month > 4 & month < 11) %>% 
+  aggregate(temp~date+depth+year+site, FUN ="mean") %>% 
+  filter(depth != 0)
+#df1$year <- year(df1$day)
+df1
+```
+#y = 1/153
+x = 0.5
+
+```{r}
+for (s in unique(df1$site)){
+  df2 <- df1 %>%  filter(site == s)
+  for (y in unique(df2$year)) {
+    title <- paste0(s, y, ".png") 
+      df3 <- df2 %>% 
+      filter(year == y)
+      
+        maxdepth <- (-1*max(df2$depth))
+
+     
+      p <- ggplot(df3) +
+          geom_rect(aes(xmin = (date - hours(12)), xmax = (date + hours(12)), ymin = -(depth - 0.25), ymax = -(depth +0.25), color = temp, fill = temp)) +
+          xlab("")+
+          ylab("Depth (m)") +
+          ggtitle(paste0("Daily mean temperature at ", s, " during ", y)) +
+          scale_y_continuous(breaks=seq(maxdepth, 0, 0.5), limits = c(maxdepth, 0)) +
+     
+          scale_x_datetime(date_labels = "%b", date_breaks = "1 month", expand = c(0, 0)) +
+          scale_color_gradientn(colors = c( "azure",
+                                            "darkslategray1",
+                                           # "darkseagreen1",
+                                            "palegreen1",
+                                           # "olivedrab2",
+                                            "gold",
+                                            "darkorange",
+                                            "orangered3",
+                                            "firebrick"
+                                            )) +
+             scale_fill_gradientn(colors = c( "azure",
+                                            "darkslategray1",
+                                           # "darkseagreen1",
+                                            "palegreen1",
+                                           # "olivedrab2",
+                                            "gold",
+                                            "darkorange",
+                                            "orangered3",
+                                            "firebrick"
+                                            )) +
+          theme_bw() +
+          theme(panel.grid.major = element_blank(), 
+                panel.grid.minor = element_blank(), 
+             #   panel.border = element_blank(), 
+                #  panel.background = element_rect(colour = "black", size=4.4, fill=NA),
+           # panel.border = element_rect(colour = "white", size=3., fill=NA),
+                strip.background = element_blank()) 
+          ggsave(plot = last_plot(), filename = title, path = "Exports/heatMaps")
+  
+      print(p)
+  }        
+}
+```
+
+```{r}
+  
+      if (is.finite(max(df2$depth) == TRUE)) {
+        maxdepth <- (-1*max(df2$depth))
+      } else {
+        maxdepth <- (-10)
+  
+      }
+```
+
+```{r}
+for (s in unique(df1$site)){
+  for (y in unique(df1$year)) {
+    title <- paste0(s, y, ".png") 
+      df2 <- df1 %>% 
+      filter(site == s & year == y)
+      maxdepth <- (-1*max(df2$depth[is.finite(df2$depth)]))
+      print(maxdepth)
+  }
+  
+}
+```
+```{r}
+
+```
+
+
